@@ -1,6 +1,5 @@
 from __future__ import annotations
 from src.orchestrator import Orchestrator
-from src.workers import CodeWorker
 from src.utils import console
 
 def main():
@@ -8,7 +7,6 @@ def main():
     console.print("Forces understanding. Grows with you.\n")
 
     orch = Orchestrator()
-    code_worker = CodeWorker()
 
     # 1. Start project
     project = input("Project name: ").strip() or "default-project"
@@ -39,8 +37,20 @@ def main():
         if proceed != "y":
             continue
 
-        # Run the Worker
-        worker_output = code_worker.run(step)
+        # Decide which worker to use
+        step_lower = step.lower()
+        if any(word in step_lower for word in ["test", "verify", "check", "validate"]):
+            from src.workers import TestWorker
+            worker = TestWorker()
+        elif any(word in step_lower for word in ["research", "find", "gather", "investigate", "docs", "look up"]):
+            from src.workers import ResearchWorker
+            worker = ResearchWorker()
+        else:
+            from src.workers import CodeWorker
+            worker = CodeWorker()
+
+        # Run the chosen Worker
+        worker_output = worker.run(step)
 
         # Force the Gate
         result = orch.run_next_step(worker_output=worker_output)
