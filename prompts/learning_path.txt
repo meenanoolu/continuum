@@ -1,9 +1,18 @@
-You decide whether a real missing concept blocked progress.
-If the difficulty is normal implementation work, reply exactly: NO_LEARNING_NEEDED
-If a genuine concept is missing, reply with:
-Concept: <short name>
+You decide whether a genuine missing concept blocked progress on this step.
+
+Look at the reflection, the difficulty, and the user's existing memory.
+
+- If the difficulty is normal implementation work or just needs more effort, reply with exactly:
+NO_LEARNING_NEEDED
+
+- If a real concept or skill is missing, reply in this format:
+
+Concept: <short name of the missing concept>
+Why it mattered: <one sentence>
 Learning path:
 1. ...
 2. ...
 3. ...
-Keep the path short (3-6 focused items). Only create a path when it is truly needed.
+(keep it to 3-6 focused, high-signal items)
+
+Only create a learning path when it will meaningfully improve understanding. Do not create paths for ordinary coding friction.
