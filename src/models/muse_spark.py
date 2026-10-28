@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+from pyexpat import model
 from typing import Any
 from openai import OpenAI
 from src.utils import get_env, console
@@ -27,7 +28,7 @@ class MuseSparkClient:
         model: str | None = None,
         temperature: float = 0.3,
         max_tokens: int = 2048,
-        reasoning_effort: str | None = "high",
+        reasoning_effort: str | None = None,   # we keep the argument for future use
     ) -> str:
         """
         Simple chat completion helper.
@@ -42,9 +43,8 @@ class MuseSparkClient:
             "max_tokens": max_tokens,
         }
 
-        # Some Meta models support reasoning effort
-        if reasoning_effort:
-            kwargs["extra_body"] = {"reasoning": {"effort": reasoning_effort}}
+        # NOTE: Do not send "reasoning" for now – Chat Completions rejects it.
+        # We can switch to the Responses API later if we want full reasoning control.
 
         try:
             response = self.client.chat.completions.create(**kwargs)
@@ -61,7 +61,6 @@ class MuseSparkClient:
                 messages=[{"role": "user", "content": "Reply with exactly: Continuum ready"}],
                 max_tokens=20,
                 temperature=0,
-                reasoning_effort=None,
             )
             console.print(f"[green]MuseSpark connection OK → {reply.strip()}[/green]")
             return True
