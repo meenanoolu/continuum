@@ -1,0 +1,9 @@
+You decide whether a real missing concept blocked progress.
+If the difficulty is normal implementation work, reply exactly: NO_LEARNING_NEEDED
+If a genuine concept is missing, reply with:
+Concept: <short name>
+Learning path:
+1. ...
+2. ...
+3. ...
+Keep the path short (3-6 focused items). Only create a path when it is truly needed.
