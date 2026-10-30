@@ -1,4 +1,5 @@
 from __future__ import annotations
+from curses import raw
 from typing import Any
 from src.models import MuseSparkClient
 from src.memory import PersonalMemory
@@ -96,23 +97,33 @@ class Gate:
             max_tokens=800,
         )
 
-        # Very lightweight parsing (we keep it simple for the hackathon)
         import json
+        import re
+
+        # Try to extract clean JSON
         try:
-            # Try to extract JSON if the model wrapped it
-            start = raw.find("{")
-            end = raw.rfind("}") + 1
+            # Remove markdown code blocks if present
+            cleaned = re.sub(r"```json|```", "", raw).strip()
+            start = cleaned.find("{")
+            end = cleaned.rfind("}") + 1
             if start >= 0 and end > start:
-                return json.loads(raw[start:end])
+                parsed = json.loads(cleaned[start:end])
+                # Make sure all keys exist
+                return {
+                    "what_happened": str(parsed.get("what_happened", "")),
+                    "what_worked": str(parsed.get("what_worked", "")),
+                    "what_was_difficult": str(parsed.get("what_was_difficult", "")),
+                    "why": str(parsed.get("why", "")),
+                }
         except Exception:
             pass
 
-        # Fallback structured dict
+        # Fallback
         return {
-            "what_happened": raw[:300],
-            "what_worked": "See full reflection",
-            "what_was_difficult": "See full reflection",
-            "why": "See full reflection",
+            "what_happened": raw[:400],
+            "what_worked": "See full reflection above",
+            "what_was_difficult": "See full reflection above",
+            "why": "See full reflection above",
         }
 
     def _generate_explanation(
@@ -149,15 +160,12 @@ class Gate:
         """
         Returns (missing_concept, learning_path) or (None, None)
         """
-        # Simple heuristic for the 10-day version
         difficult = reflection.get("what_was_difficult", "").lower()
         why = reflection.get("why", "").lower()
-
-        # If the user already mastered related concepts, be lighter
         context = self.memory.get_context_for_orchestrator(project_name)
 
         system = self._load_prompt("learning_path") or (
-            "You detect whether a real missing concept blocked progress. "
+            "You decide whether a real missing concept blocked progress. "
             "If yes, create a short focused learning path (3-6 items). "
             "If the difficulty is just normal work, return NO_LEARNING_NEEDED."
         )
@@ -168,8 +176,14 @@ class Gate:
             f"Why: {why}\n"
             f"User question (if any): {user_question or 'none'}\n"
             f"User memory context:\n{context}\n\n"
-            "Does this require a short learning path? "
-            "If yes, name the concept and give the learning path. "
+            "Does this require a short learning path?\n"
+            "If yes, reply in this exact format:\n\n"
+            "Concept: <short name>\n"
+            "Why it mattered: <one sentence>\n"
+            "Learning path:\n"
+            "1. ...\n"
+            "2. ...\n"
+            "3. ...\n\n"
             "If no, reply exactly: NO_LEARNING_NEEDED"
         )
 
@@ -185,9 +199,12 @@ class Gate:
         if "NO_LEARNING_NEEDED" in raw.upper():
             return None, None
 
-        # Very simple extraction for the hackathon
+        # Extract concept name
         concept = "detected concept"
-        if "concept:" in raw.lower():
-            concept = raw.lower().split("concept:")[1].split("\n")[0].strip()[:80]
+        if "Concept:" in raw:
+            try:
+                concept = raw.split("Concept:")[1].split("\n")[0].strip()
+            except Exception:
+                pass
 
         return concept, raw
