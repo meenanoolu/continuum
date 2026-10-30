@@ -1,10 +1,11 @@
 from __future__ import annotations
-from curses import raw
 from typing import Any
 from src.models import MuseSparkClient
 from src.memory import PersonalMemory
 from src.utils import console
 from pathlib import Path
+import json
+import re
 
 class Gate:
     """
@@ -32,10 +33,6 @@ class Gate:
         worker_output: str,
         user_question: str | None = None,
     ) -> dict[str, Any]:
-        """
-        Runs the full gate.
-        Returns a dict with reflection, explanation, learning_path (or None), and passed=True/False.
-        """
         console.print(f"\n[bold yellow]═══ GATE triggered for step: {step} ═══[/bold yellow]")
 
         # 1. Reflection
@@ -73,7 +70,7 @@ class Gate:
             "explanation": explanation,
             "missing_concept": missing_concept,
             "learning_path": learning_path,
-            "passed": learning_path is None,  # if there is a learning path, user must complete it
+            "passed": learning_path is None,
         }
 
         return result
@@ -97,18 +94,12 @@ class Gate:
             max_tokens=800,
         )
 
-        import json
-        import re
-
-        # Try to extract clean JSON
         try:
-            # Remove markdown code blocks if present
             cleaned = re.sub(r"```json|```", "", raw).strip()
             start = cleaned.find("{")
             end = cleaned.rfind("}") + 1
             if start >= 0 and end > start:
                 parsed = json.loads(cleaned[start:end])
-                # Make sure all keys exist
                 return {
                     "what_happened": str(parsed.get("what_happened", "")),
                     "what_worked": str(parsed.get("what_worked", "")),
@@ -118,7 +109,6 @@ class Gate:
         except Exception:
             pass
 
-        # Fallback
         return {
             "what_happened": raw[:400],
             "what_worked": "See full reflection above",
@@ -157,9 +147,6 @@ class Gate:
         reflection: dict[str, str],
         user_question: str | None,
     ) -> tuple[str | None, str | None]:
-        """
-        Returns (missing_concept, learning_path) or (None, None)
-        """
         difficult = reflection.get("what_was_difficult", "").lower()
         why = reflection.get("why", "").lower()
         context = self.memory.get_context_for_orchestrator(project_name)
@@ -199,7 +186,6 @@ class Gate:
         if "NO_LEARNING_NEEDED" in raw.upper():
             return None, None
 
-        # Extract concept name
         concept = "detected concept"
         if "Concept:" in raw:
             try:

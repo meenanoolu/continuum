@@ -40,7 +40,7 @@ async function runNextStep() {
     const res = await fetch("/run-step", { method: "POST" });
     const data = await res.json();
 
-    console.log("Gate result:", data);
+    console.log("Gate result:", data);   // for debugging
 
     btn.disabled = false;
     btn.textContent = "Run Next Step";
@@ -56,7 +56,9 @@ async function runNextStep() {
     }
 
     if (data.status === "blocked_by_gate") {
-      const learning = data.gate?.learning_path || data.gate?.missing_concept || "A learning path was required but no details were returned.";
+      const learning = data.gate?.learning_path 
+                    || data.gate?.missing_concept 
+                    || "A learning path was required but no details were returned.";
       
       gateDiv.innerHTML = `
         <div class="bg-amber-900/30 border border-amber-700 rounded-xl p-5">

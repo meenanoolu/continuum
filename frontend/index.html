@@ -4,7 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Continuum</title>
-  <link rel="icon" href="data:,">
+
+  <!-- Remove default favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'></svg>">
+  <link rel="shortcut icon" href="#">
+
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
@@ -19,7 +23,8 @@
       <input id="project-name" type="text" placeholder="Project name"
              class="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 focus:outline-none focus:border-zinc-500" />
       
-      <textarea id="plan" rows="4" placeholder="Describe only the NEXT meaningful piece of work (2-4 sentences)"
+      <textarea id="plan" rows="4"
+                placeholder="Describe only the NEXT meaningful piece of work (2-4 sentences)"
                 class="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 focus:outline-none focus:border-zinc-500"></textarea>
       
       <button onclick="startProject()"
@@ -28,7 +33,7 @@
       </button>
     </div>
 
-    <!-- Main Section (hidden at first) -->
+    <!-- Main Section -->
     <div id="main-section" class="hidden space-y-6">
       <div id="steps-list" class="space-y-2"></div>
 
