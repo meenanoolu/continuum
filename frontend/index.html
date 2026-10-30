@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Continuum</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+
+  <div class="max-w-3xl mx-auto px-6 py-10">
+    <h1 class="text-3xl font-semibold mb-2">Continuum</h1>
+    <p class="text-zinc-400 mb-8">Forces understanding. Grows with you.</p>
+
+    <!-- Start Section -->
+    <div id="start-section" class="space-y-4">
+      <input id="project-name" type="text" placeholder="Project name"
+             class="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 focus:outline-none focus:border-zinc-500" />
+      
+      <textarea id="plan" rows="4" placeholder="Describe only the NEXT meaningful piece of work (2-4 sentences)"
+                class="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 focus:outline-none focus:border-zinc-500"></textarea>
+      
+      <button onclick="startProject()"
+              class="bg-white text-black font-medium px-6 py-3 rounded-xl hover:bg-zinc-200 transition">
+        Start Continuum
+      </button>
+    </div>
+
+    <!-- Main Section (hidden at first) -->
+    <div id="main-section" class="hidden space-y-6">
+      <div id="steps-list" class="space-y-2"></div>
+
+      <button id="run-btn" onclick="runNextStep()"
+              class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-6 py-3 rounded-xl transition">
+        Run Next Step
+      </button>
+
+      <div id="gate-result" class="space-y-4"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
