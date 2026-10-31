@@ -6,13 +6,6 @@ import os
 import re
 
 class CodeWorker:
-    """
-    Practical CodeWorker (Option A)
-    - Generates real code
-    - Saves it into workspace/
-    - Returns the actual code so the Gate can test understanding on real output
-    """
-
     def __init__(self):
         self.muse = MuseSparkClient()
         self.open_weight = OpenWeightClient() if os.getenv("BASETEN_API_KEY") else None
@@ -22,7 +15,6 @@ class CodeWorker:
     def run(self, step: str) -> str:
         console.print(f"[cyan]→ CodeWorker executing: {step}[/cyan]")
 
-        # Prefer open-weight model for Workers when available
         client = self.open_weight if self.open_weight else self.muse
         model_name = "Muse Spark Open (Baseten)" if self.open_weight else "Muse Spark"
 
@@ -56,11 +48,9 @@ class CodeWorker:
                 "Model returned empty content. No files were written."
             )
 
-        # Parse and save files
         saved_files = self._save_code_blocks(raw)
 
         if not saved_files:
-            # Fallback: save the whole response as a single file
             fallback_path = self.workspace / "generated_step.py"
             fallback_path.write_text(raw, encoding="utf-8")
             saved_files = [str(fallback_path)]
@@ -76,9 +66,7 @@ class CodeWorker:
         return summary
 
     def _save_code_blocks(self, text: str) -> list[str]:
-        """Extract ### FILE: path blocks and save them."""
         saved = []
-        # Pattern: ### FILE: path\n```lang\ncode\n```
         pattern = r"###\s*FILE:\s*([^\n]+)\n```(?:\w+)?\n(.*?)```"
         matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
 
@@ -86,10 +74,8 @@ class CodeWorker:
             rel_path = rel_path.strip().lstrip("./")
             if not rel_path or ".." in rel_path:
                 continue
-
             file_path = self.workspace / rel_path
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(code.strip() + "\n", encoding="utf-8")
             saved.append(str(file_path))
-
         return saved
