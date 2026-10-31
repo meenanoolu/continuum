@@ -1,43 +1,95 @@
 from __future__ import annotations
-from src.models import OpenWeightClient, MuseSparkClient
+from pathlib import Path
+from src.models import MuseSparkClient, OpenWeightClient
 from src.utils import console
+import os
+import re
 
 class CodeWorker:
     """
-    Specialized Worker for coding tasks.
-    Prefers open-weight (Baseten) when available, falls back to MuseSpark only if necessary.
+    Practical CodeWorker (Option A)
+    - Generates real code
+    - Saves it into workspace/
+    - Returns the actual code so the Gate can test understanding on real output
     """
 
     def __init__(self):
-        self.open_weight = OpenWeightClient()
         self.muse = MuseSparkClient()
+        self.open_weight = OpenWeightClient() if os.getenv("BASETEN_API_KEY") else None
+        self.workspace = Path("workspace")
+        self.workspace.mkdir(exist_ok=True)
 
-    def run(self, step: str, context: str = "") -> str:
-        console.print(f"[blue]CodeWorker working on:[/blue] {step}")
+    def run(self, step: str) -> str:
+        console.print(f"[cyan]→ CodeWorker executing: {step}[/cyan]")
 
-        prompt = f"""You are the Code Worker in Continuum.
-Your job is to perform the following coding step and return a clear, concrete result.
+        # Prefer open-weight model for Workers when available
+        client = self.open_weight if self.open_weight else self.muse
+        model_name = "Muse Spark Open (Baseten)" if self.open_weight else "Muse Spark"
 
-Step: {step}
+        system = (
+            "You are a senior software engineer. "
+            "Given a concrete coding step, write real, working code. "
+            "Reply with the complete code for one or more files. "
+            "Use this exact format:\n\n"
+            "### FILE: relative/path/to/file.py\n"
+            "```python\n"
+            "# real code here\n"
+            "```\n\n"
+            "You may output multiple FILE blocks. "
+            "Do not write explanations outside the code blocks."
+        )
 
-Additional context:
-{context}
+        user_content = f"Implement this step with real code:\n\n{step}"
 
-Return:
-- What you did
-- Key code changes or decisions (if any)
-- Any problems you encountered
-Be concise and factual.
-"""
+        raw = client.chat(
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.2,
+            max_tokens=1800,
+        )
 
-        messages = [{"role": "user", "content": prompt}]
+        if not raw or not raw.strip():
+            return (
+                f"[CodeWorker using {model_name}]\n"
+                "Model returned empty content. No files were written."
+            )
 
-        # Prefer open-weight when available
-        if self.open_weight.client is not None:
-            try:
-                return self.open_weight.chat(messages, temperature=0.3, max_tokens=1200)
-            except Exception as e:
-                console.print(f"[yellow]OpenWeight failed ({e}), falling back to MuseSpark[/yellow]")
+        # Parse and save files
+        saved_files = self._save_code_blocks(raw)
 
-        # Fallback (uses your Meta credits – keep this rare)
-        return self.muse.chat(messages, temperature=0.3, max_tokens=1200)
+        if not saved_files:
+            # Fallback: save the whole response as a single file
+            fallback_path = self.workspace / "generated_step.py"
+            fallback_path.write_text(raw, encoding="utf-8")
+            saved_files = [str(fallback_path)]
+
+        summary = (
+            f"[CodeWorker using {model_name}]\n"
+            f"Step: {step}\n\n"
+            f"Files written:\n" + "\n".join(f"- {f}" for f in saved_files) + "\n\n"
+            f"Generated code:\n{raw[:3000]}"
+        )
+
+        console.print(f"[green]✓ CodeWorker wrote {len(saved_files)} file(s)[/green]")
+        return summary
+
+    def _save_code_blocks(self, text: str) -> list[str]:
+        """Extract ### FILE: path blocks and save them."""
+        saved = []
+        # Pattern: ### FILE: path\n```lang\ncode\n```
+        pattern = r"###\s*FILE:\s*([^\n]+)\n```(?:\w+)?\n(.*?)```"
+        matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
+
+        for rel_path, code in matches:
+            rel_path = rel_path.strip().lstrip("./")
+            if not rel_path or ".." in rel_path:
+                continue
+
+            file_path = self.workspace / rel_path
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(code.strip() + "\n", encoding="utf-8")
+            saved.append(str(file_path))
+
+        return saved
