@@ -1,6 +1,5 @@
 from __future__ import annotations
 import os
-from pyexpat import model
 from typing import Any
 from openai import OpenAI
 from src.utils import get_env, console
@@ -19,7 +18,6 @@ class MuseSparkClient:
             api_key=api_key,
             base_url=base_url,
         )
-        # Prefer the latest capable model. Change to contributor variant if you want cheaper experiments.
         self.default_model = "muse-spark-1.3"
 
     def chat(
@@ -28,41 +26,46 @@ class MuseSparkClient:
         model: str | None = None,
         temperature: float = 0.3,
         max_tokens: int = 2048,
-        reasoning_effort: str | None = None,   # we keep the argument for future use
+        reasoning_effort: str | None = None,
     ) -> str:
-        """
-        Simple chat completion helper.
-        Returns the assistant text content.
-        """
         model = model or self.default_model
 
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-
-        # NOTE: Do not send "reasoning" for now – Chat Completions rejects it.
-        # We can switch to the Responses API later if we want full reasoning control.
-
         try:
-            response = self.client.chat.completions.create(**kwargs)
-            content = response.choices[0].message.content
-            return content or ""
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+            console.print(f"[dim]DEBUG raw response type: {type(response)}[/dim]")
+
+            if not response.choices:
+                console.print("[red]No choices in response[/red]")
+                return ""
+
+            message = response.choices[0].message
+            content = message.content
+
+            if content is None or str(content).strip() == "":
+                console.print("[red]Model returned empty content[/red]")
+                console.print(f"[dim]Full message object: {message}[/dim]")
+                return ""
+
+            return str(content).strip()
+
         except Exception as e:
             console.print(f"[red]MuseSpark error: {e}[/red]")
             raise
 
     def test_connection(self) -> bool:
-        """Tiny call to verify the key and credits work."""
         try:
             reply = self.chat(
                 messages=[{"role": "user", "content": "Reply with exactly: Continuum ready"}],
                 max_tokens=20,
                 temperature=0,
             )
-            console.print(f"[green]MuseSpark connection OK → {reply.strip()}[/green]")
+            console.print(f"[green]MuseSpark connection OK → {reply}[/green]")
             return True
         except Exception as e:
             console.print(f"[red]MuseSpark connection failed: {e}[/red]")
