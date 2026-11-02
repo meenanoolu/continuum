@@ -1,0 +1,3 @@
+plan (next piece only) -> Worker (tools, real execution) -> independent verification
+   -> Gate: reflection + grounded questions -> you explain back
+   -> pass: next step    |    fail: learning path + retry question -> memory updates -> stricter Gate / plan revision
