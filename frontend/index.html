@@ -4,45 +4,94 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Continuum</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'></svg>">
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230E1620'/%3E%3Cpath d='M16 0V32' stroke='%23fff' stroke-width='3'/%3E%3Crect x='6' y='13' width='20' height='6' fill='%23FFB000'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/style.css" />
 </head>
-<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+<body>
+  <a class="skip" href="#stage">Skip to the current step</a>
 
-  <div class="max-w-3xl mx-auto px-6 py-10">
-    <h1 class="text-3xl font-semibold mb-2">Continuum</h1>
-    <p class="text-zinc-400 mb-8">Forces understanding. Grows with you.</p>
-
-    <!-- Start Section -->
-    <div id="start-section" class="space-y-4">
-      <input id="project-name" type="text" placeholder="Project name"
-             class="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 focus:outline-none focus:border-zinc-500" />
-      
-      <textarea id="plan" rows="4"
-                placeholder="Describe only the NEXT meaningful piece of work (2-4 sentences)"
-                class="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 focus:outline-none focus:border-zinc-500"></textarea>
-      
-      <button onclick="startProject()"
-              class="bg-white text-black font-medium px-6 py-3 rounded-xl hover:bg-zinc-200 transition">
-        Start Continuum
-      </button>
+  <header class="top">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 0V32" /><rect x="5" y="13" width="22" height="6" /></svg>
+      <span class="wordmark">Continuum</span>
     </div>
+    <div id="pills" class="pills" aria-label="Model status"></div>
+  </header>
 
-    <!-- Main Section -->
-    <div id="main-section" class="hidden space-y-6">
-      <div id="steps-list" class="space-y-2"></div>
+  <main>
+    <!-- ============ start ============ -->
+    <section id="start" class="start">
+      <div class="start-copy">
+        <h1 class="display">Ship it.<br>Then earn the next step.</h1>
+        <p class="lede">Continuum plans one piece of work, has agents build and test it for real, and keeps the next step locked until you can explain what was built.</p>
+        <svg class="hero-thread" viewBox="0 0 520 120" aria-hidden="true" role="img">
+          <path class="ht-line" d="M10 60 H510" />
+          <g class="ht-node n1"><circle cx="70" cy="60" r="10" /></g>
+          <g class="ht-node n2"><circle cx="210" cy="60" r="10" /></g>
+          <g class="ht-gate"><rect class="gl" x="300" y="22" width="14" height="76" /><rect class="gr" x="316" y="22" width="14" height="76" /></g>
+          <g class="ht-node n3"><circle cx="450" cy="60" r="10" /></g>
+        </svg>
+        <ul class="promises">
+          <li>Agents run your code and the tests, then Continuum re-runs them itself.</li>
+          <li>You answer questions about the real diff, in your own words.</li>
+          <li>It remembers where you struggle and gets stricter exactly there.</li>
+        </ul>
+      </div>
 
-      <button id="run-btn" onclick="runNextStep()"
-              class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-6 py-3 rounded-xl transition">
-        Run Next Step
-      </button>
+      <form id="start-form" class="sheet start-form" autocomplete="off">
+        <label for="project-name">Project name</label>
+        <input id="project-name" type="text" maxlength="80" placeholder="e.g. slothprep" />
+        <label for="repo">Existing repo <span class="opt">optional, a folder path or a github.com link</span></label>
+        <input id="repo" type="text" maxlength="300" placeholder="C:\code\slothprep  or  https://github.com/you/slothprep" />
+        <label for="plan">What is the next piece of work?</label>
+        <textarea id="plan" rows="5" placeholder="Two to four concrete sentences. For example: add a /health endpoint that reports database status, and write tests for the failure case."></textarea>
+        <div class="row">
+          <label class="ghost file">
+            Attach a screenshot or diagram
+            <input id="ctx-image" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
+          </label>
+          <span id="ctx-image-name" class="muted small"></span>
+        </div>
+        <p id="start-error" class="error" role="alert" hidden></p>
+        <button id="start-btn" class="primary big" type="submit">Plan this work</button>
+      </form>
+    </section>
 
-      <!-- Gate area -->
-      <div id="gate-area" class="space-y-4"></div>
-    </div>
-  </div>
+    <!-- ============ app ============ -->
+    <section id="app" class="app" hidden>
+      <nav class="thread-col" aria-label="Plan">
+        <div class="thread-head">
+          <h2 id="project-label" class="project"></h2>
+          <button id="revise-btn" class="link" type="button">Re-plan remaining steps</button>
+        </div>
+        <ol id="thread" class="thread"></ol>
+        <div id="revisions" class="revisions" hidden></div>
+        <button id="new-btn" class="link faint" type="button">Start a different project</button>
+      </nav>
 
+      <div id="stage" class="stage" tabindex="-1">
+        <div id="headline" class="headline"></div>
+        <div class="runbar">
+          <button id="run-btn" class="primary big" type="button">Run this step</button>
+          <span id="run-hint" class="muted"></span>
+        </div>
+        <div id="log" class="log" hidden aria-live="polite"></div>
+        <div id="error-box" class="error-box" role="alert" hidden></div>
+        <div id="evidence"></div>
+        <div id="gate"></div>
+      </div>
+
+      <aside class="dossier" aria-label="What Continuum knows about you">
+        <div class="dossier-head">
+          <h2>What it knows about you</h2>
+          <button id="reset-mem" class="link faint" type="button">Erase</button>
+        </div>
+        <div id="memory"></div>
+        <h3 class="trace-title">Model calls</h3>
+        <div id="trace" class="trace"></div>
+      </aside>
+    </section>
+  </main>
   <script src="/static/app.js"></script>
 </body>
 </html>

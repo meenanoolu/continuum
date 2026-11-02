@@ -1,180 +1,216 @@
+"""FastAPI layer. Thin: all behavior lives in the Orchestrator."""
 from __future__ import annotations
-from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
-from src.orchestrator import Orchestrator
-from src.workers import CodeWorker, ResearchWorker, TestWorker
-from src.utils import console
+
+import threading
+import time
 from pathlib import Path
+from typing import Any
+
 import uvicorn
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from src import trace
+from src.models import get_models
+from src.orchestrator import Orchestrator, OrchestratorError
 
 app = FastAPI(title="Continuum")
-
-# Serve frontend
-frontend_dir = Path(__file__).parent.parent / "frontend"
+frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
 app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
 
-orch = Orchestrator()
+_orch: Orchestrator | None = None
 
-# Temporary storage for the current Gate state (simple in-memory for the hackathon)
-current_gate_state: dict = {}
 
+def orch() -> Orchestrator:
+    global _orch
+    if _orch is None:
+        _orch = Orchestrator()
+    return _orch
+
+
+def reset_for_tests() -> None:
+    global _orch
+    _orch = None
+
+
+# ---------------------------------------------------------------- background job (live agent log)
+class Job:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.events: list[dict[str, Any]] = []
+        self.status = "idle"  # idle | running | done
+        self.t0 = 0.0
+
+    def start(self) -> None:
+        with self.lock:
+            self.events, self.status, self.t0 = [], "running", time.time()
+
+    def emit(self, kind: str, text: str) -> None:
+        with self.lock:
+            self.events.append({"i": len(self.events), "t": round(time.time() - self.t0, 1), "kind": kind, "text": text})
+
+    def finish(self) -> None:
+        with self.lock:
+            self.status = "done"
+
+    def since(self, n: int) -> dict[str, Any]:
+        with self.lock:
+            return {"status": self.status, "events": self.events[n:], "next": len(self.events)}
+
+
+job = Job()
+
+
+def _err(e: OrchestratorError) -> HTTPException:
+    return HTTPException(status_code=e.status, detail=str(e))
+
+
+# ---------------------------------------------------------------- schemas
 class StartRequest(BaseModel):
-    project_name: str
-    plan: str
+    project_name: str = Field(min_length=1, max_length=80)
+    plan: str = Field(min_length=1, max_length=4000)
+    repo: str | None = Field(default=None, max_length=300)
+    context_image: str | None = None  # data URL
 
-class HumanAnswersRequest(BaseModel):
-    explain_back: str
-    answers: list[str]          # exactly 3 answers
 
-class LearningConfirmationRequest(BaseModel):
-    confirmation: str
+class AnswersRequest(BaseModel):
+    explain_back: str = Field(max_length=6000)
+    answers: list[str] = Field(max_length=6)
 
+
+class LearningRequest(BaseModel):
+    confirmation: str = Field(max_length=3000)
+    retry_answer: str = Field(max_length=6000)
+
+
+class ImageRequest(BaseModel):
+    data_url: str
+    purpose: str = "gate"
+
+
+class ReviseRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=300)
+
+
+# ---------------------------------------------------------------- routes
 @app.get("/")
-def read_index():
+def index() -> FileResponse:
     return FileResponse(frontend_dir / "index.html")
 
-@app.post("/start")
-def start_project(req: StartRequest):
+
+@app.get("/api/health")
+def health() -> dict[str, Any]:
+    import os
+
+    return {"ok": True, "models": get_models().status(), "fake_llm": os.getenv("CONTINUUM_FAKE_LLM") == "1"}
+
+
+@app.get("/api/state")
+def state() -> dict[str, Any]:
+    return orch().snapshot()
+
+
+@app.post("/api/start")
+def start(req: StartRequest) -> dict[str, Any]:
+    o = orch()
     try:
-        orch.start_project(req.project_name)
-        steps = orch.require_plan(req.plan)
-        return {
-            "status": "ok",
-            "project": req.project_name,
-            "steps": steps,
-            "current_step": 0
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        o.check_plan_text(req.plan)  # reject a vague plan BEFORE wiping the current session
+        o.start_project(req.project_name, req.repo)
+        if req.context_image:
+            o.attach_image(req.context_image, "context")
+        o.require_plan(req.plan)
+    except OrchestratorError as e:
+        raise _err(e)
+    return o.snapshot()
 
-@app.post("/run-step")
-def run_step():
-    """Run the worker and start the Gate (first half)."""
-    global current_gate_state
 
-    if not orch.current_project or not orch.current_plan:
-        raise HTTPException(status_code=400, detail="No active project")
+@app.post("/api/step/run", status_code=202)
+def run_step() -> dict[str, Any]:
+    o = orch()
+    if job.status == "running" or o.state["phase"] != "planned":
+        raise HTTPException(status_code=409, detail=f"Cannot run a step now (phase: {o.state['phase']}).")
+    job.start()
 
-    if orch.current_step_index >= len(orch.current_plan):
-        return {"status": "plan_complete"}
+    def work() -> None:
+        try:
+            o.run_step(job.emit)
+        finally:
+            job.finish()
 
-    step = orch.current_plan[orch.current_step_index]
+    threading.Thread(target=work, daemon=True).start()
+    return {"started": True}
 
-    # Simple worker routing
-    step_lower = step.lower()
-    if any(w in step_lower for w in ["test", "verify", "check", "validate"]):
-        worker = TestWorker()
-    elif any(w in step_lower for w in ["research", "find", "gather", "investigate", "docs"]):
-        worker = ResearchWorker()
-    else:
-        worker = CodeWorker()
 
-    worker_output = worker.run(step)
+@app.get("/api/job")
+def job_events(since: int = 0) -> dict[str, Any]:
+    out = job.since(max(0, since))
+    out["state"] = orch().snapshot() if out["status"] == "done" else None
+    return out
 
-    # Start the human-in-the-loop Gate
-    gate_result = orch.gate.start_gate(
-        project_name=orch.current_project,
-        step=step,
-        worker_output=worker_output,
-    )
 
-    # Store state so we can evaluate later
-    current_gate_state = {
-        "step": step,
-        "reflection": gate_result["reflection"],
-        "explanation": gate_result["explanation"],
-        "questions": gate_result["questions"],
-    }
+@app.post("/api/gate/answers")
+def gate_answers(req: AnswersRequest) -> dict[str, Any]:
+    try:
+        return orch().submit_answers(req.explain_back, req.answers)
+    except OrchestratorError as e:
+        raise _err(e)
 
-    return {
-        "status": "awaiting_human",
-        "step": step,
-        "gate": gate_result,
-        "current_step_index": orch.current_step_index,
-    }
 
-@app.post("/submit-answers")
-def submit_answers(req: HumanAnswersRequest):
-    """Second half of the Gate – grade the human."""
-    global current_gate_state
+@app.post("/api/gate/learning")
+def gate_learning(req: LearningRequest) -> dict[str, Any]:
+    try:
+        return orch().complete_learning(req.confirmation, req.retry_answer)
+    except OrchestratorError as e:
+        raise _err(e)
 
-    if not current_gate_state:
-        raise HTTPException(status_code=400, detail="No active Gate. Run a step first.")
 
-    if len(req.answers) != 3:
-        raise HTTPException(status_code=400, detail="Please provide exactly 3 answers")
+@app.post("/api/image")
+def image(req: ImageRequest) -> dict[str, Any]:
+    try:
+        notes = orch().attach_image(req.data_url, req.purpose)
+    except OrchestratorError as e:
+        raise _err(e)
+    return {"notes": notes}
 
-    result = orch.gate.evaluate_human(
-        project_name=orch.current_project,
-        step=current_gate_state["step"],
-        explain_back=req.explain_back,
-        answers=req.answers,
-        questions=current_gate_state["questions"],
-        reflection=current_gate_state["reflection"],
-        explanation=current_gate_state["explanation"],
-    )
 
-    if result["passed"]:
-        # Unlock next step
-        orch.current_step_index += 1
-        current_gate_state = {}
-        return {
-            "status": "passed",
-            "feedback": result["feedback"],
-            "current_step_index": orch.current_step_index,
-            "remaining_steps": len(orch.current_plan) - orch.current_step_index,
-        }
+@app.post("/api/plan/revise")
+def revise(req: ReviseRequest) -> dict[str, Any]:
+    try:
+        out = orch().revise_plan(req.reason)
+    except OrchestratorError as e:
+        raise _err(e)
+    return {**out, "state": orch().snapshot()}
 
-    # Failed → learning path forced
-    current_gate_state["learning_path"] = result["learning_path"]
-    current_gate_state["feedback"] = result["feedback"]
 
-    return {
-        "status": "blocked_by_learning",
-        "feedback": result["feedback"],
-        "learning_path": result["learning_path"],
-    }
+@app.get("/api/diff")
+def diff() -> dict[str, str]:
+    o = orch()
+    return {"diff": o.sandbox.diff(40000) if o.sandbox else ""}
 
-@app.post("/complete-learning")
-def complete_learning(req: LearningConfirmationRequest):
-    """Human finished the forced learning path."""
-    global current_gate_state
 
-    if not current_gate_state or "learning_path" not in current_gate_state:
-        raise HTTPException(status_code=400, detail="No active learning path")
+@app.get("/api/memory")
+def memory() -> dict[str, Any]:
+    o = orch()
+    return o.memory.profile(o.state["project"])
 
-    result = orch.gate.complete_learning_path(
-        project_name=orch.current_project,
-        step=current_gate_state["step"],
-        learning_path=current_gate_state["learning_path"],
-        user_confirmation=req.confirmation,
-    )
 
-    if result["passed"]:
-        orch.current_step_index += 1
-        current_gate_state = {}
-        return {
-            "status": "passed",
-            "feedback": result["feedback"],
-            "current_step_index": orch.current_step_index,
-            "remaining_steps": len(orch.current_plan) - orch.current_step_index,
-        }
+@app.post("/api/memory/reset")
+def memory_reset() -> dict[str, bool]:
+    orch().memory.reset()
+    trace.clear()
+    return {"ok": True}
 
-    return {
-        "status": "rejected",
-        "reason": result.get("reason", "Confirmation too short"),
-    }
 
-@app.get("/status")
-def get_status():
-    return {
-        "project": orch.current_project,
-        "plan": orch.current_plan,
-        "current_step_index": orch.current_step_index,
-        "memory_summary": orch.memory.get_context_for_orchestrator(orch.current_project or "default"),
-    }
+@app.post("/api/project/abandon")
+def abandon() -> dict[str, Any]:
+    try:
+        orch().abandon()
+    except OrchestratorError as e:
+        raise _err(e)
+    return orch().snapshot()
+
 
 if __name__ == "__main__":
-    uvicorn.run("src.api:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("src.api:app", host="127.0.0.1", port=8000, reload=False)
