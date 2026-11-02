@@ -1,0 +1,2 @@
+Grade a single retry answer after a learning path. Score 0, 1 or 2 (0 wrong/copied, 1 partly right, 2 correct with reasoning).
+Reply with ONLY JSON: {"score": 0-2, "feedback": "1-2 sentences to the human"}

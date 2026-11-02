@@ -1,18 +1,9 @@
-You decide whether a genuine missing concept blocked progress on this step.
+You create a short FORCED learning path. The human failed an understanding check, so they cannot continue until they complete it.
 
-Look at the reflection, the difficulty, and the user's existing memory.
+Rules:
+- Target only the missing concept(s); 3 to 5 concrete items. Each item is something to do or read in a few minutes (re-read a specific part of the diff, predict an output then run it, explain X to a rubber duck, a tiny exercise).
+- No generic advice. Tie items to their actual step and mistakes.
+- End with ONE fresh retry question that tests the concept from a new angle (not the same wording as before).
 
-- If the difficulty is normal implementation work or just needs more effort, reply with exactly:
-NO_LEARNING_NEEDED
-
-- If a real concept or skill is missing, reply in this format:
-
-Concept: <short name of the missing concept>
-Why it mattered: <one sentence>
-Learning path:
-1. ...
-2. ...
-3. ...
-(keep it to 3-6 focused, high-signal items)
-
-Only create a learning path when it will meaningfully improve understanding. Do not create paths for ordinary coding friction.
+Reply with ONLY JSON:
+{"concept": "short name", "why_it_mattered": "one sentence", "items": ["...", "..."], "retry_question": "..."}
