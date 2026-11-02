@@ -3,7 +3,6 @@
 __pycache__/
 *.pyc
 data/
-*.log
-.DS_Store
-.idea/
-.vscode/
+workspace/
+.pytest_cache/
+node_modules/
