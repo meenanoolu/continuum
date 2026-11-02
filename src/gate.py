@@ -1,299 +1,259 @@
+"""
+The Gate. After every step the next one stays locked until the human proves understanding.
+
+Flow:  prepare()  -> reflection + explanation + concept + grounded questions (one model call)
+       evaluate() -> grade explain-back + answers (+ optional image) -> pass, or forced learning path
+       complete_learning() -> a fresh retry question must be answered before unlocking
+
+Adaptive: strictness, number of questions and pass threshold come from personal memory.
+Grounded: questions are built from the Worker's real evidence (diff, test output), not its story.
+"""
 from __future__ import annotations
-from typing import Any
-from pathlib import Path
-import json
+
 import re
-import os
+import time
+from typing import Any
 
-from src.models import MuseSparkClient, OpenWeightClient
 from src.memory import PersonalMemory
-from src.utils import console
+from src.memory.personal_memory import norm_concept
+from src.models import Models
+from src.utils import console, load_prompt
 
-def get_reliable_client():
-    """Prefer the model that actually returns content (Baseten first)."""
-    if os.getenv("BASETEN_API_KEY"):
-        try:
-            client = OpenWeightClient()
-            return client, "OpenWeight (Baseten)"
-        except Exception:
-            pass
-    return MuseSparkClient(), "MuseSpark"
+_WORD = re.compile(r"[a-z0-9_]{4,}")
+
+
+def overlap_ratio(answer: str, reference: str) -> float:
+    """Share of the answer's distinctive words that also appear in the reference (0..1)."""
+    a = _WORD.findall(answer.lower())
+    if len(a) < 8:
+        return 0.0
+    ref = set(_WORD.findall(reference.lower()))
+    return sum(1 for w in a if w in ref) / len(a)
+
+
+def _clip(n: Any, lo: int = 0, hi: int = 2) -> int:
+    try:
+        return max(lo, min(hi, int(round(float(n)))))
+    except (TypeError, ValueError):
+        return 0
+
 
 class Gate:
-    def __init__(self, muse: MuseSparkClient, memory: PersonalMemory):
-        self.muse = muse
+    def __init__(self, models: Models, memory: PersonalMemory):
+        self.models = models
         self.memory = memory
-        self.prompts_dir = Path(__file__).parent.parent / "prompts"
-        self.client, self.client_name = get_reliable_client()
-        console.print(f"[dim]Gate using: {self.client_name}[/dim]")
 
-    def _load_prompt(self, name: str) -> str:
-        path = self.prompts_dir / f"{name}.txt"
-        if path.exists():
-            return path.read_text(encoding="utf-8")
-        return ""
+    # ------------------------------------------------------------------ prepare
+    def prepare(self, project: str, step: dict[str, Any], worker_text: str, policy: dict[str, Any]) -> dict[str, Any]:
+        n = policy["questions"]
+        user = (
+            f"Step: {step['title']}\nWhy: {step.get('why', '')}\nIntended concept: {step.get('concept', '')}\n\n"
+            f"Learning policy: {policy['strictness']}; ask exactly {n} questions."
+            + (f" Weak concepts to probe if relevant: {', '.join(policy['weak_concepts'])}." if policy["weak_concepts"] else "")
+            + f"\n\n{worker_text}"
+        )
+        data = self.models.json(
+            "meta", "gate.prepare",
+            [{"role": "system", "content": load_prompt("gate_prepare")}, {"role": "user", "content": user}],
+            max_tokens=1800,
+            validate=lambda d: isinstance(d, dict) and isinstance(d.get("questions"), list) and len(d["questions"]) >= 2,
+        )
+        if data is None:
+            console.print("[yellow]Gate.prepare: model unavailable, using evidence-only fallback[/yellow]")
+            data = self._fallback(step, worker_text, n)
 
-    def start_gate(self, project_name: str, step: str, worker_output: str) -> dict[str, Any]:
-        console.print(f"\n[bold yellow]═══ GATE started for step: {step} ═══[/bold yellow]")
-
-        reflection = self._generate_reflection(step, worker_output)
-        explanation = self._generate_explanation(step, reflection, worker_output)
-        questions = self._generate_check_questions(step, reflection, explanation)
-
-        self.memory.add_reflection(project_name, step, reflection, explanation)
-
+        questions = []
+        for q in data["questions"][:n]:
+            if isinstance(q, str):
+                q = {"question": q}
+            questions.append(
+                {"question": str(q.get("question", "")).strip() or "Explain the key decision in this step.",
+                 "type": str(q.get("type", "why")), "focus": str(q.get("focus", ""))}
+            )
+        refl = data.get("reflection") or {}
+        reflection = {k: str(refl.get(k, "")).strip() or "-" for k in ("what_happened", "what_worked", "what_was_difficult", "why")}
+        concept = norm_concept(str(data.get("concept") or step.get("concept") or step["title"]))
+        explanation = str(data.get("explanation", "")).strip() or "No explanation was generated."
+        self.memory.add_reflection(project, step["title"], reflection, explanation)
         return {
-            "status": "awaiting_human",
-            "step": step,
+            "concept": concept,
             "reflection": reflection,
             "explanation": explanation,
             "questions": questions,
-            "passed": False,
-            "learning_path": None,
+            "policy": policy,
+            "started_at": time.time(),
+            "attempt": 0,
+            "learning": None,
+            "image_notes": None,
         }
 
-    def evaluate_human(
-        self,
-        project_name: str,
-        step: str,
-        explain_back: str,
-        answers: list[str],
-        questions: list[str],
-        reflection: dict[str, str],
-        explanation: str,
-    ) -> dict[str, Any]:
-        console.print("[bold yellow]═══ Evaluating human answers ═══[/bold yellow]")
-
-        if not explain_back or len(explain_back.strip()) < 30:
-            return {
-                "status": "rejected",
-                "reason": "Explain-back is too short. Write at least a few sentences.",
-                "passed": False,
-            }
-
-        grade_result = self._grade_answers(step, explain_back, questions, answers, reflection)
-        passed = grade_result["passed"]
-        feedback = grade_result["feedback"]
-
-        if passed:
-            console.print("[green]✓ Human passed the Gate[/green]")
-            for concept in grade_result.get("concepts_learned", []):
-                self.memory.add_concept_learned(project_name, concept)
-            return {
-                "status": "passed",
-                "passed": True,
-                "feedback": feedback,
-                "learning_path": None,
-            }
-
-        console.print("[yellow]✗ Human failed – forcing Learning Path[/yellow]")
-        learning_path = self._create_forced_learning_path(step, reflection, explain_back, feedback)
-
-        return {
-            "status": "blocked_by_learning",
-            "passed": False,
-            "feedback": feedback,
-            "learning_path": learning_path,
-        }
-
-    def complete_learning_path(
-        self,
-        project_name: str,
-        step: str,
-        learning_path: str,
-        user_confirmation: str,
-    ) -> dict[str, Any]:
-        if not user_confirmation or len(user_confirmation.strip()) < 15:
-            return {
-                "status": "rejected",
-                "reason": "Please write a short confirmation of what you learned.",
-                "passed": False,
-            }
-
-        concept = "key concept from learning path"
-        if "Concept:" in learning_path:
-            try:
-                concept = learning_path.split("Concept:")[1].split("\n")[0].strip()[:60]
-            except Exception:
-                pass
-
-        self.memory.add_concept_learned(project_name, concept)
-        console.print(f"[green]✓ Learning path completed. Concept marked: {concept}[/green]")
-
-        return {
-            "status": "passed",
-            "passed": True,
-            "feedback": "Learning path completed. Next step unlocked.",
-        }
-
-    # ------------------------------------------------------------------
-    def _generate_reflection(self, step: str, worker_output: str) -> dict[str, str]:
-        system = (
-            "You are a strict reflection engine. "
-            "Reply ONLY with valid JSON using exactly these keys: "
-            "what_happened, what_worked, what_was_difficult, why"
-        )
-        user_content = f"Step: {step}\n\nWorker output:\n{worker_output[:1500]}\n\nProduce the reflection JSON."
-
-        raw = self.client.chat(
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0.2,
-            max_tokens=700,
-        )
-        return self._safe_parse_json(raw or "")
-
-    def _generate_explanation(self, step: str, reflection: dict, worker_output: str) -> str:
-        system = "Explain the key reasoning in clear plain language. 1-3 short paragraphs."
-        user_content = (
-            f"Step: {step}\nReflection: {json.dumps(reflection)}\n"
-            f"Worker output: {worker_output[:800]}\n\nWrite the explanation."
-        )
-        raw = self.client.chat(
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0.3,
-            max_tokens=500,
-        )
-        return (raw or "No explanation was generated.").strip()
-
-    def _generate_check_questions(self, step: str, reflection: dict, explanation: str) -> list[str]:
-        system = (
-            "Generate exactly 3 short check questions that test whether a human "
-            "understood the key decisions of this step. "
-            "Reply with a JSON array of exactly 3 strings."
-        )
-        user_content = (
-            f"Step: {step}\nReflection: {json.dumps(reflection)}\n"
-            f"Explanation: {explanation}\n\nGenerate 3 check questions as a JSON array."
-        )
-        raw = self.client.chat(
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0.3,
-            max_tokens=400,
-        )
-
-        try:
-            cleaned = re.sub(r"```json|```", "", raw or "").strip()
-            start = cleaned.find("[")
-            end = cleaned.rfind("]") + 1
-            if start >= 0 and end > start:
-                questions = json.loads(cleaned[start:end])
-                if isinstance(questions, list) and len(questions) >= 3:
-                    return [str(q) for q in questions[:3]]
-        except Exception:
-            pass
-
-        return [
-            "What was the main goal of this step?",
-            "What was the most difficult part and why?",
-            "What would you do differently next time?",
+    @staticmethod
+    def _fallback(step: dict[str, Any], worker_text: str, n: int) -> dict[str, Any]:
+        first = worker_text.splitlines()[0] if worker_text else "no evidence"
+        qs = [
+            {"question": "In your own words, what does the code you just got actually do, and why was it built that way?", "type": "why", "focus": ""},
+            {"question": "What would break or change if the main input of this step were empty or invalid?", "type": "what_if", "focus": ""},
+            {"question": "Which part of the result would you check first to be sure it works, and how?", "type": "trace", "focus": ""},
+            {"question": "What is the riskiest assumption in this step?", "type": "why", "focus": ""},
         ]
-
-    def _grade_answers(
-        self,
-        step: str,
-        explain_back: str,
-        questions: list[str],
-        answers: list[str],
-        reflection: dict,
-    ) -> dict[str, Any]:
-        system = (
-            "You are grading a human's understanding. "
-            'Reply ONLY with JSON: {"passed": true/false, "feedback": "...", "concepts_learned": []}'
-        )
-        user_content = (
-            f"Step: {step}\nReflection: {json.dumps(reflection)}\n\n"
-            f"Human explain-back:\n{explain_back}\n\nQuestions and answers:\n"
-        )
-        for i, (q, a) in enumerate(zip(questions, answers)):
-            user_content += f"{i+1}. Q: {q}\n   A: {a}\n"
-        user_content += "\nGrade whether the human understood the step."
-
-        raw = self.client.chat(
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0.2,
-            max_tokens=400,
-        )
-
-        try:
-            cleaned = re.sub(r"```json|```", "", raw or "").strip()
-            start = cleaned.find("{")
-            end = cleaned.rfind("}") + 1
-            if start >= 0 and end > start:
-                result = json.loads(cleaned[start:end])
-                return {
-                    "passed": bool(result.get("passed", False)),
-                    "feedback": str(result.get("feedback", "")),
-                    "concepts_learned": result.get("concepts_learned", []),
-                }
-        except Exception:
-            pass
-
         return {
-            "passed": False,
-            "feedback": "Could not reliably grade the answers. Please try again with clearer responses.",
-            "concepts_learned": [],
+            "concept": step.get("concept") or step["title"],
+            "reflection": {"what_happened": first, "what_worked": "-", "what_was_difficult": "-", "why": "-"},
+            "explanation": "The Gate model was unavailable, so this check uses generic questions. " + first,
+            "questions": qs[:n],
         }
 
-    def _create_forced_learning_path(
-        self, step: str, reflection: dict, explain_back: str, feedback: str
-    ) -> str:
-        system = (
-            "Create a short forced learning path (3-5 items) because the human failed the understanding check. "
-            "Start with 'Concept: ...'"
-        )
-        user_content = (
-            f"Step: {step}\nReflection: {json.dumps(reflection)}\n"
-            f"Human explain-back: {explain_back}\nGrading feedback: {feedback}\n\n"
-            "Create the learning path."
-        )
-        raw = self.client.chat(
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0.3,
-            max_tokens=500,
-        )
-        return (raw or "Concept: core idea of this step\n1. Review the reflection\n2. Re-explain the hard part\n3. Try the check questions again").strip()
+    # ------------------------------------------------------------------ evaluate
+    def evaluate(
+        self,
+        project: str,
+        step: dict[str, Any],
+        state: dict[str, Any],
+        explain_back: str,
+        answers: list[str],
+        worker_text: str,
+    ) -> dict[str, Any]:
+        questions = state["questions"]
+        if len(explain_back.strip()) < 30:
+            return {"status": "rejected", "reason": "Explain-back is too short. Write a few real sentences."}
+        if len(answers) != len(questions) or any(len(a.strip()) < 3 for a in answers):
+            return {"status": "rejected", "reason": "Answer every check question."}
 
-    def _safe_parse_json(self, text: str) -> dict[str, str]:
-        if not text:
-            return {
-                "what_happened": "No reflection content returned.",
-                "what_worked": "—",
-                "what_was_difficult": "—",
-                "why": "—",
+        reference = state["explanation"] + " " + " ".join(state["reflection"].values())
+        elapsed = time.time() - state["started_at"]
+        eb_overlap = overlap_ratio(explain_back, reference)
+        ans_overlap = [overlap_ratio(a, reference) for a in answers]
+        signals = {
+            "parroting": eb_overlap > 0.75 or any(o > 0.8 for o in ans_overlap),
+            "shallow_explain": len(explain_back.split()) < 25,
+            "fast_submit": elapsed < 12,
+        }
+        hints = []
+        if eb_overlap > 0.75:
+            hints.append(f"explain-back overlaps the reference explanation {eb_overlap:.0%}")
+        for i, o in enumerate(ans_overlap):
+            if o > 0.8:
+                hints.append(f"answer {i + 1} overlaps the reference explanation {o:.0%}")
+        if signals["fast_submit"]:
+            hints.append(f"all answers were submitted within {int(elapsed)} seconds")
+
+        user = f"Step: {step['title']}\n\nREFERENCE (what the human was shown):\n{state['explanation']}\n\n{worker_text[:2500]}\n\n"
+        user += f"HUMAN EXPLAIN-BACK:\n{explain_back}\n\nQUESTIONS AND ANSWERS:\n"
+        for i, (q, a) in enumerate(zip(questions, answers), 1):
+            user += f"{i}. Q: {q['question']}\n   A: {a}\n"
+        if hints:
+            user += "\nINTEGRITY SIGNALS:\n- " + "\n- ".join(hints) + "\n"
+        if state.get("image_notes"):
+            user += f"\nIMAGE THE HUMAN ATTACHED (description by a vision model):\n{state['image_notes']}\n"
+
+        data = self.models.json(
+            "meta", "gate.grade",
+            [{"role": "system", "content": load_prompt("gate_grade")}, {"role": "user", "content": user}],
+            max_tokens=1200,
+            validate=lambda d: isinstance(d, dict) and isinstance(d.get("answers"), list) and "explain_back" in d,
+        )
+        if data is None:
+            # Never punish the human (or their memory) for a grader outage.
+            return {"status": "grader_error", "reason": "The grader model is unavailable right now. Try submitting again."}
+
+        eb = _clip((data.get("explain_back") or {}).get("score"))
+        if eb_overlap > 0.75:
+            eb = min(eb, 1)
+        item_scores: list[int] = []
+        details = []
+        raw_answers = data["answers"]
+        for i, q in enumerate(questions):
+            entry = raw_answers[i] if i < len(raw_answers) and isinstance(raw_answers[i], dict) else {}
+            s = _clip(entry.get("score"))
+            if ans_overlap[i] > 0.8:
+                s = min(s, 1)
+            item_scores.append(s)
+            details.append({"question": q["question"], "score": s, "note": str(entry.get("note", ""))})
+        vm = data.get("visual_match")
+        extra = [_clip(vm.get("score"))] if isinstance(vm, dict) and state.get("image_notes") else []
+        weights_total = 2 + len(item_scores) + len(extra)
+        avg = (2 * eb + sum(item_scores) + sum(extra)) / weights_total
+        passed = avg >= state["policy"]["pass_threshold"] and eb >= 1
+
+        missing = [norm_concept(c) for c in (data.get("missing_concepts") or []) if str(c).strip()]
+        state["attempt"] += 1
+        concept = state["concept"] if passed or not missing else missing[0]
+        self.memory.record_gate(project, step["title"], concept, passed, avg, signals, state["attempt"])
+
+        result: dict[str, Any] = {
+            "status": "passed" if passed else "blocked_by_learning",
+            "passed": passed,
+            "score": round(avg, 2),
+            "threshold": state["policy"]["pass_threshold"],
+            "explain_back": {"score": eb, "note": str((data.get("explain_back") or {}).get("note", ""))},
+            "answers": details,
+            "visual": {"score": extra[0], "note": str(vm.get("note", ""))} if extra else None,
+            "signals": [s for s, f in signals.items() if f],
+            "feedback": str(data.get("feedback", "")).strip(),
+        }
+        if not passed:
+            result["learning"] = self._learning_path(step, state, explain_back, result["feedback"], concept)
+        return result
+
+    # ------------------------------------------------------------------ learning
+    def _learning_path(self, step: dict[str, Any], state: dict[str, Any], explain_back: str, feedback: str, concept: str) -> dict[str, Any]:
+        user = (
+            f"Step: {step['title']}\nMissing concept: {concept}\nGrader feedback: {feedback}\n"
+            f"What they wrote:\n{explain_back[:800]}\nQuestions they were asked:\n"
+            + "\n".join(f"- {q['question']}" for q in state["questions"])
+        )
+        data = self.models.json(
+            "meta", "gate.learning_path",
+            [{"role": "system", "content": load_prompt("learning_path")}, {"role": "user", "content": user}],
+            max_tokens=900,
+            validate=lambda d: isinstance(d, dict) and isinstance(d.get("items"), list) and d.get("retry_question"),
+        )
+        if data is None:
+            data = {
+                "concept": concept,
+                "why_it_mattered": "The check showed this idea is not solid yet.",
+                "items": [
+                    "Re-read the diff for this step and mark the line where the key decision happens.",
+                    "Write down, before running anything, what you expect the code to output for one input; then run it and compare.",
+                    "Explain the decision out loud in two sentences, without looking at the explanation.",
+                ],
+                "retry_question": f"Without looking back: explain {concept} as it applies to this step, with one concrete example.",
             }
-        try:
-            text = re.sub(r"```json|```", "", text).strip()
-            start = text.find("{")
-            end = text.rfind("}") + 1
-            if start == -1:
-                raise ValueError("No JSON object")
-            json_str = text[start:end] if end > start else text[start:] + "}"
-            parsed = json.loads(json_str)
-            return {
-                "what_happened": str(parsed.get("what_happened", "")).strip() or "—",
-                "what_worked": str(parsed.get("what_worked", "")).strip() or "—",
-                "what_was_difficult": str(parsed.get("what_was_difficult", "")).strip() or "—",
-                "why": str(parsed.get("why", "")).strip() or "—",
-            }
-        except Exception:
-            return {
-                "what_happened": text[:500],
-                "what_worked": "Could not fully parse",
-                "what_was_difficult": "Could not fully parse",
-                "why": "Could not fully parse",
-            }
+        data["concept"] = norm_concept(str(data.get("concept") or concept))
+        data["items"] = [str(i) for i in data["items"]][:5]
+        state["learning"] = data
+        return data
+
+    def complete_learning(self, project: str, state: dict[str, Any], confirmation: str, retry_answer: str) -> dict[str, Any]:
+        learning = state.get("learning")
+        if not learning:
+            return {"status": "rejected", "reason": "There is no active learning path."}
+        if len(confirmation.strip()) < 15:
+            return {"status": "rejected", "reason": "Write a short note on what you learned (15+ characters)."}
+        if len(retry_answer.strip()) < 20:
+            return {"status": "rejected", "reason": "Answer the retry question properly (a few sentences)."}
+        user = (
+            f"Concept: {learning['concept']}\nRetry question: {learning['retry_question']}\n"
+            f"Reference explanation they were shown earlier:\n{state['explanation']}\n\nTheir answer:\n{retry_answer}"
+        )
+        if overlap_ratio(retry_answer, state["explanation"]) > 0.8:
+            user += "\n\nINTEGRITY SIGNAL: the answer overlaps the reference explanation by more than 80%. Score at most 1."
+        data = self.models.json(
+            "meta", "gate.learning_grade",
+            [{"role": "system", "content": load_prompt("learning_grade")}, {"role": "user", "content": user}],
+            max_tokens=500,
+            validate=lambda d: isinstance(d, dict) and "score" in d,
+        )
+        if data is None:
+            return {"status": "grader_error", "reason": "The grader model is unavailable right now. Try again."}
+        score = _clip(data.get("score"))
+        if overlap_ratio(retry_answer, state["explanation"]) > 0.8:
+            score = min(score, 1)
+        passed = score >= 1
+        self.memory.record_learning(project, learning["concept"], passed)
+        return {
+            "status": "passed" if passed else "retry",
+            "passed": passed,
+            "score": score,
+            "feedback": str(data.get("feedback", "")).strip(),
+        }
