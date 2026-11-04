@@ -31,6 +31,30 @@ const svgLock = () => {
   s.append(r, p); return s;
 };
 
+// Outline icons for the voice button: "mic" (idle), "stop" (recording), "spin" (transcribing).
+// Built with createElementNS so the "no innerHTML" rule above still holds.
+function svgIcon(kind) {
+  const ns = "http://www.w3.org/2000/svg", s = document.createElementNS(ns, "svg");
+  s.setAttribute("viewBox", "0 0 24 24");
+  s.setAttribute("class", "mic-icon " + kind);
+  s.setAttribute("aria-hidden", "true");
+  const add = (tag, attrs) => {
+    const e = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+    s.append(e);
+  };
+  if (kind === "mic") {
+    add("rect", { x: 9, y: 3, width: 6, height: 11, rx: 3 });
+    add("path", { d: "M5.5 11a6.5 6.5 0 0 0 13 0" });
+    add("path", { d: "M12 17.5V21" });
+  } else if (kind === "stop") {
+    add("rect", { x: 7, y: 7, width: 10, height: 10, rx: 1.5 });
+  } else {
+    add("path", { d: "M12 4a8 8 0 1 0 8 8" });
+  }
+  return s;
+}
+
 async function api(path, method = "GET", body) {
   const res = await fetch(path, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
   let data = null;
@@ -199,7 +223,10 @@ function renderEvidence() {
 
 // ------------------------------------------------------------------ gate
 function area(label, id, rows, hint) {
-  return h("div", { class: "q" }, label, h("textarea", { id, rows, placeholder: hint || "" }));
+  const lab = typeof label === "string" ? h("label", { for: id }, label) : label;
+  return h("div", { class: "q" },
+    h("div", { class: "label-row" }, lab, micBtn(id)),
+    h("textarea", { id, rows, placeholder: hint || "" }));
 }
 function pips(n) { return h("span", { class: "pips", "aria-label": `${n} of 2` }, [0, 1].map((i) => h("i", { class: i < n ? "on" : "" }))); }
 
@@ -306,6 +333,81 @@ function renderTrace() {
   S.trace.slice().reverse().forEach((c) => el.append(h("span", { class: c.ok ? "" : "bad", title: c.model }, `${c.purpose}  ${c.model.replace("meta-models/", "")}  ${c.ms}ms`)));
 }
 
+
+// ------------------------------------------------------------------ voice (Muse Voice Transcribe)
+function micBtn(targetId) {
+  const btn = h("button", {
+    type: "button",
+    class: "mic-btn",
+    title: "Speak instead of typing (Muse Voice Transcribe)",
+    "aria-label": "Record voice"
+  });
+  btn.append(svgIcon("mic"));
+  let rec = null, chunks = [], state = "idle"; // idle | rec | busy
+
+  const set = (s, label) => {
+    state = s;
+    btn.classList.toggle("rec", s === "rec");
+    btn.classList.toggle("busy", s === "busy");
+    btn.disabled = s === "busy";
+    btn.replaceChildren(svgIcon(s === "rec" ? "stop" : s === "busy" ? "spin" : "mic"));
+    btn.title = label || "Speak instead of typing";
+    btn.setAttribute("aria-label", s === "rec" ? "Stop recording" : s === "busy" ? "Transcribing" : "Record voice");
+  };
+
+  btn.addEventListener("click", async () => {
+    if (state === "busy") return;
+    if (state === "rec") {
+      try { rec && rec.stop(); } catch (_) {}
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert("Microphone is not available in this browser.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunks = [];
+      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus"
+                 : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+      rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        set("busy", "Transcribing…");
+        try {
+          const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+          const fd = new FormData();
+          fd.append("audio", blob, "clip.webm");
+          const r = await fetch("/api/transcribe", { method: "POST", body: fd });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(data.detail || data.error || ("HTTP " + r.status));
+          const el = $(targetId);
+          if (el) {
+            const cur = (el.value || "").trim();
+            el.value = cur ? (cur + " " + data.text) : data.text;
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.focus();
+          }
+        } catch (e) {
+          alert("Voice failed: " + (e.message || e));
+        } finally {
+          set("idle");
+          rec = null;
+        }
+      };
+      rec.start();
+      set("rec", "Click to stop");
+      // safety stop after 45s
+      setTimeout(() => { if (state === "rec" && rec && rec.state === "recording") rec.stop(); }, 45000);
+    } catch (e) {
+      alert("Could not open microphone: " + (e.message || e));
+      set("idle");
+    }
+  });
+  return btn;
+}
+
 // ------------------------------------------------------------------ misc buttons
 $("revise-btn").addEventListener("click", async () => {
   try { const r = await api("/api/plan/revise", "POST", {}); S = r.state; renderedKey = ""; render(); if (!r.revised) showError("The planner could not produce a revision. Try again."); }
@@ -323,5 +425,11 @@ $("new-btn").addEventListener("click", async () => {
 (async function init() {
   try { window.__fake = (await api("/api/health")).fake_llm; } catch (_) { /* ignore */ }
   try { S = await api("/api/state"); } catch (_) { S = null; }
+  // wire static plan mic
+  const planMic = $("plan-mic");
+  if (planMic) {
+    const real = micBtn("plan");
+    planMic.replaceWith(real);
+  }
   render();
 })();
