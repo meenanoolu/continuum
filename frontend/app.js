@@ -7,6 +7,8 @@ let lastGrade = null;  // last gate / learning result, shown until the next step
 let ctxImage = null;   // optional planning image (data URL)
 let renderedKey = "";
 let polling = false;
+let showHome = false;  // true while the person is looking at the home page with a project still in progress
+let pastProjects = []; // saved projects from /api/projects (the current one included)
 let fx = { slam: false, openIdx: null, shake: false };   // one-shot gate animations
 
 function h(tag, props, ...kids) {
@@ -98,8 +100,14 @@ $("start-form").addEventListener("submit", async (e) => {
   err.hidden = true;
   const body = { project_name: $("project-name").value.trim(), plan: $("plan").value.trim(), repo: $("repo").value.trim() || null, context_image: ctxImage };
   if (!body.project_name || !body.plan) { err.textContent = "Add a project name and describe the next piece of work."; err.hidden = false; return; }
+  // Past projects are saved automatically; only a project with the SAME name gets replaced.
+  const dup = pastProjects.some((p) => p.name.trim().toLowerCase() === body.project_name.toLowerCase());
+  if (dup && !confirm(`A saved project named "${body.project_name}" already exists. Starting this replaces it. Continue?`)) return;
   btn.disabled = true; btn.textContent = "Planning...";
-  try { lastGrade = null; renderedKey = ""; S = await api("/api/start", "POST", body); render(); }
+  try {
+    lastGrade = null; renderedKey = "";
+    S = await api("/api/start", "POST", body); showHome = false; render(); loadPast();
+  }
   catch (ex) { err.textContent = ex.message; err.hidden = false; }
   finally { btn.disabled = false; btn.textContent = "Plan this work"; }
 });
@@ -141,13 +149,53 @@ function showError(msg) { const b = $("error-box"); b.textContent = msg; b.hidde
 // ------------------------------------------------------------------ render
 function render() {
   renderPills();
-  const active = S && S.project && S.phase !== "idle";
-  $("start").hidden = !!active; $("app").hidden = !active;
-  if (!active) return;
+  const active = !!(S && S.project && S.phase !== "idle");
+  const inApp = active && !showHome;
+  $("start").hidden = inApp; $("app").hidden = !inApp;
+  renderResume(active);
+  if (!inApp) return;
   $("project-label").textContent = S.project;
   if (S.phase === "planned" && lastGrade && lastGrade.status === "passed" && !polling) $("log").hidden = true;
   renderThread(); renderHeadline(); renderRun(); renderEvidence(); renderGate(); renderMemory(); renderRevisions(); renderTrace();
   fx = { slam: false, openIdx: null, shake: false };
+}
+
+// Saved projects: every project is archived by the server, so starting a new one never loses the old one.
+async function loadPast() {
+  try { pastProjects = (await api("/api/projects")).projects || []; } catch (_) { pastProjects = []; }
+  renderPast();
+}
+function renderPast() {
+  const box = $("past");
+  if (!box) return;
+  clear(box);
+  const list = pastProjects.filter((p) => !p.current);
+  box.hidden = !list.length;
+  if (!list.length) return;
+  box.append(
+    h("h3", {}, "Past projects"),
+    h("ul", {}, list.map((p) => h("li", {},
+      h("span", { class: "pname" }, p.name),
+      h("span", { class: "pmeta" }, p.phase === "complete" ? `${p.total} steps, complete` : `${p.done}/${p.total} steps`),
+      h("button", { class: "ghost", type: "button", onclick: () => openProject(p.id) }, "Open")))));
+}
+async function openProject(id) {
+  try {
+    lastGrade = null; renderedKey = "";
+    S = await api(`/api/projects/${encodeURIComponent(id)}/resume`, "POST");
+    showHome = false; $("log").hidden = true; render(); loadPast();
+  } catch (e) { alert(e.message); }
+}
+
+// On the home page, offer a way back into a project that is still in progress (nothing is lost by visiting home).
+function renderResume(active) {
+  const box = $("resume");
+  if (!box) return;
+  clear(box); box.hidden = !active;
+  if (!active) return;
+  box.append(
+    h("span", {}, h("b", {}, "Project in progress: "), S.project),
+    h("button", { class: "ghost", type: "button", onclick: () => { showHome = false; render(); } }, "Continue this project"));
 }
 
 function renderPills() {
@@ -409,6 +457,10 @@ function micBtn(targetId) {
 }
 
 // ------------------------------------------------------------------ misc buttons
+$("home-link").addEventListener("click", (e) => {   // the logo goes home without erasing the project
+  e.preventDefault();
+  showHome = true; render(); window.scrollTo(0, 0); loadPast();
+});
 $("revise-btn").addEventListener("click", async () => {
   try { const r = await api("/api/plan/revise", "POST", {}); S = r.state; renderedKey = ""; render(); if (!r.revised) showError("The planner could not produce a revision. Try again."); }
   catch (e) { showError(e.message); }
@@ -418,7 +470,7 @@ $("reset-mem").addEventListener("click", async () => {
   await api("/api/memory/reset", "POST"); S = await api("/api/state"); render();
 });
 $("new-btn").addEventListener("click", async () => {
-  try { S = await api("/api/project/abandon", "POST"); lastGrade = null; renderedKey = ""; $("log").hidden = true; render(); }
+  try { S = await api("/api/project/abandon", "POST"); lastGrade = null; renderedKey = ""; $("log").hidden = true; render(); loadPast(); }
   catch (e) { showError(e.message); }
 });
 
@@ -432,4 +484,5 @@ $("new-btn").addEventListener("click", async () => {
     planMic.replaceWith(real);
   }
   render();
+  loadPast();
 })();

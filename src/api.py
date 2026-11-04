@@ -216,6 +216,20 @@ def abandon() -> dict[str, Any]:
     return orch().snapshot()
 
 
+@app.get("/api/projects")
+def projects() -> dict[str, Any]:
+    """Saved projects (the current one included, flagged), newest first."""
+    return {"projects": orch().list_projects()}
+
+
+@app.post("/api/projects/{project_id}/resume")
+def resume_project(project_id: str) -> dict[str, Any]:
+    try:
+        orch().resume_project(project_id)
+    except OrchestratorError as e:
+        raise _err(e)
+    return orch().snapshot()
+
 
 @app.post("/api/transcribe")
 async def transcribe(audio: UploadFile = File(...)) -> dict[str, Any]:

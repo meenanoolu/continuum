@@ -4,6 +4,9 @@ forces the Gate after every step, and re-plans when personal memory says the per
 
 State is persisted to data/session.json after every change, so a refresh or a server restart in the
 middle of a demo never loses the plan or a pending Gate.
+
+Every project is also archived to data/projects/<slug>.json on each save, so starting a new project
+(or abandoning one) never loses the old one: it shows up under "Past projects" and can be reopened.
 """
 from __future__ import annotations
 
@@ -98,8 +101,19 @@ class Orchestrator:
             "revisions": [], "revised_at_outcomes": 0, "error": None,
         }
 
+    @property
+    def projects_dir(self) -> Path:
+        return self.session_path.parent / "projects"
+
     def _save(self) -> None:
         save_json(self.state, self.session_path)
+        self._archive()
+
+    def _archive(self) -> None:
+        """Keep a copy of the current project under data/projects/ so it survives starting another one."""
+        if self.state.get("project"):
+            ensure_dir(self.projects_dir)
+            save_json(self.state, self.projects_dir / f"{_slug(self.state['project'])}.json")
 
     def _load(self) -> None:
         data = load_json(self.session_path, default={})
@@ -110,6 +124,7 @@ class Orchestrator:
             self.state["phase"] = "planned"
         self.sandbox = Sandbox(self.workspace_dir / _slug(self.state["project"]))
         self.sandbox.snapshot()
+        self._archive()  # projects created before history existed get saved on the next start
 
     def _require(self, *phases: str) -> None:
         if self.state["phase"] not in phases:
@@ -179,6 +194,54 @@ class Orchestrator:
             self.state.update(plan=steps, index=0, phase="planned", gate=None, last_result=None)
             self._save()
             return steps
+
+    # ---------------------------------------------------------------- saved projects (history)
+    def list_projects(self) -> list[dict[str, Any]]:
+        """Saved projects, newest first. Empty shells (a start that never got a plan) are skipped."""
+        d = self.projects_dir
+        if not d.exists():
+            return []
+        current = _slug(self.state["project"]) if self.state.get("project") else None
+        out: list[dict[str, Any]] = []
+        for p in d.glob("*.json"):
+            data = load_json(p, default={})
+            if not data or not data.get("project") or not data.get("plan"):
+                continue
+            plan = [s for s in data["plan"] if s.get("status") != "replaced"]
+            out.append(
+                {
+                    "id": p.stem,
+                    "name": data["project"],
+                    "phase": data.get("phase", "idle"),
+                    "done": sum(1 for s in plan if s.get("status") == "done"),
+                    "total": len(plan),
+                    "updated": p.stat().st_mtime,
+                    "current": p.stem == current,
+                }
+            )
+        out.sort(key=lambda x: x["updated"], reverse=True)
+        return out
+
+    def resume_project(self, project_id: str) -> dict[str, Any]:
+        """Make a saved project the active one. The project it replaces stays saved."""
+        with self.lock:
+            if self.state["phase"] == "running":
+                raise OrchestratorError("A step is running.", 409)
+            pid = _slug(project_id)  # also strips anything that is not a-z, 0-9 or "-" (no path tricks)
+            data = load_json(self.projects_dir / f"{pid}.json", default={})
+            if not data or not data.get("project"):
+                raise OrchestratorError("That saved project was not found.", 404)
+            self.state = {**self._blank(), **data}
+            if self.state["phase"] == "running":
+                self.state["phase"] = "planned"
+            for s in self.state["plan"]:
+                if s.get("status") == "running":
+                    s["status"] = "pending"
+            self.sandbox = Sandbox(self.workspace_dir / _slug(self.state["project"]))
+            self.sandbox.snapshot()
+            self.memory.get_project(self.state["project"])
+            self._save()
+            return self.state
 
     # ---------------------------------------------------------------- step execution
     def run_step(self, emit: Callable[[str, str], None]) -> dict[str, Any]:
@@ -345,6 +408,7 @@ class Orchestrator:
 
     # ---------------------------------------------------------------- views
     def abandon(self) -> None:
+        """Leave the current project. It stays saved under data/projects/ and can be reopened."""
         with self.lock:
             if self.state["phase"] == "running":
                 raise OrchestratorError("A step is running.", 409)

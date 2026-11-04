@@ -11,10 +11,10 @@
   <a class="skip" href="#stage">Skip to the current step</a>
 
   <header class="top">
-    <div class="brand">
+    <a class="brand" id="home-link" href="/" title="Home" aria-label="Continuum home">
       <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 0V32" /><rect x="5" y="13" width="22" height="6" /></svg>
       <span class="wordmark">Continuum</span>
-    </div>
+    </a>
     <div id="pills" class="pills" aria-label="Model status"></div>
   </header>
 
@@ -22,6 +22,8 @@
     <!-- ============ start ============ -->
     <section id="start" class="start">
       <div class="start-copy">
+        <div id="resume" class="resume" hidden></div>
+        <div id="past" class="past" hidden></div>
         <h1 class="display">Ship it.<br>Then earn the next step.</h1>
         <p class="lede">Continuum plans one piece of work, has agents build and test it for real, and keeps the next step locked until you can explain what was built.</p>
         <svg class="hero-thread" viewBox="0 0 520 120" aria-hidden="true" role="img">
