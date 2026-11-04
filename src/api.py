@@ -7,10 +7,14 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+import os
+import subprocess
+import tempfile
+import httpx
 
 from src import trace
 from src.models import get_models
@@ -210,6 +214,84 @@ def abandon() -> dict[str, Any]:
     except OrchestratorError as e:
         raise _err(e)
     return orch().snapshot()
+
+
+
+@app.post("/api/transcribe")
+async def transcribe(audio: UploadFile = File(...)) -> dict[str, Any]:
+    """Record from the browser mic → Muse Voice Transcribe → plain text for the user to edit."""
+    key = os.getenv("META_API_KEY") or os.getenv("MODEL_API_KEY")
+    if not key:
+        raise HTTPException(status_code=503, detail="META_API_KEY is not set; voice input is unavailable.")
+
+    raw = await audio.read()
+    if not raw or len(raw) < 200:
+        raise HTTPException(status_code=400, detail="Recording was empty or too short.")
+    if len(raw) > 8_000_000:
+        raise HTTPException(status_code=400, detail="Recording is too long (max ~60s).")
+
+    suffix = Path(audio.filename or "clip.webm").suffix or ".webm"
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / f"in{suffix}"
+        wav = Path(td) / "out.wav"
+        src.write_bytes(raw)
+        # Muse Voice Transcribe wants mono 16-bit WAV at 16 kHz or 24 kHz
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", str(src), "-ac", "1", "-ar", "16000", "-sample_fmt", "s16", str(wav)],
+                check=True, capture_output=True, timeout=30,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+            raise HTTPException(status_code=400, detail=f"Could not convert audio: {e}")
+
+        with wav.open("rb") as f:
+            files = {
+                "request": (None, '{"model":"muse-voice-transcribe-1.0","audioEncoding":"WAV","mode":"PUSH_TO_TALK"}', "application/json"),
+                "audio": ("audio.wav", f, "audio/wav"),
+            }
+            try:
+                r = httpx.post(
+                    "https://api.meta.ai/v1/asr/transcribe",
+                    headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+                    files=files,
+                    timeout=60,
+                )
+            except httpx.HTTPError as e:
+                raise HTTPException(status_code=502, detail=f"Voice service unreachable: {e}")
+
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Voice service error ({r.status_code}): {r.text[:300]}")
+
+    data = r.json()
+    # Response shapes vary; collect text from common fields
+    text_out = ""
+    if isinstance(data, dict):
+        if "text" in data:
+            text_out = str(data["text"])
+        elif "transcript" in data:
+            text_out = str(data["transcript"])
+        elif "turns" in data and isinstance(data["turns"], list):
+            parts = []
+            for t in data["turns"]:
+                if isinstance(t, dict):
+                    parts.append(str(t.get("text") or t.get("transcript") or ""))
+                else:
+                    parts.append(str(t))
+            text_out = " ".join(p for p in parts if p).strip()
+        else:
+            # last-resort: walk for any string that looks like speech
+            text_out = str(data)
+    else:
+        text_out = str(data)
+
+    text_out = text_out.strip()
+    if not text_out:
+        raise HTTPException(status_code=502, detail="Got an empty transcript. Try speaking a bit longer.")
+
+    trace.record(purpose="voice.transcribe", provider="meta", model="muse-voice-transcribe-1.0",
+                 ms=0, tokens=None, ok=True, note=f"{len(text_out)} chars")
+    return {"text": text_out}
+
 
 
 if __name__ == "__main__":
