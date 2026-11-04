@@ -1,8 +1,8 @@
 # Continuum
 
-**A personal multi-agent system that makes sure you finish what you start, and understand what you built.**
+**Ship with AI. Own what you ship.**
 
-AI tools write code for you and leave you with a project you cannot explain. Continuum does the opposite of autopilot. Agents do the work *and prove it works*; **you** must prove you understood it before the next step unlocks. It learns how *you* personally lose momentum and skip understanding, and it gets stricter exactly where you are weakest.
+AI coding tools create knowledge debt — working code you cannot explain, debug, or extend. Continuum is the opposite of autopilot. Agents plan, build, and verify for real; then the next step stays locked until *you* prove you understand the actual changes. It remembers where you struggle and gets a bit stricter exactly there.
 
 > Built for the **Meta Global AI Developer Hackathon** (Oct 27 - Nov 4, 2026) - track: Build for Your World. Open source, solo entry. See the git history for exactly what was written when.
 
@@ -16,7 +16,7 @@ AI tools write code for you and leave you with a project you cannot explain. Con
 3. **Trust, but verify.** Whatever the Worker *says*, Continuum re-runs the tests itself. The Gate sees ground truth (real test output, real diff). If the Worker claimed success and the independent check disagrees, the UI says so in red.
 4. **The Gate locks.** You get a reflection, an explanation, and questions pointing at real lines of the diff. You write an explain-back in your own words. Pasting the explanation back is detected and scored down.
 5. **Fail the check -> forced learning path.** A short, targeted path plus a *fresh* retry question you must answer before the next step unlocks.
-6. **Memory changes behavior.** Failed concepts, copy-paste habits, rushed answers are stored. The next Gate gets stricter (4 questions, higher bar) and *tells you why*. Two failed checks in a row make the Orchestrator re-plan the remaining work with a prerequisite step.
+6. **Memory changes behavior.** Failed concepts, copy-paste habits, rushed answers are stored. The next Gate gets a bit stricter (more questions, higher bar) and *tells you why*. Two failed checks in a row make the Orchestrator re-plan the remaining work with a prerequisite step.
 
 ## Where the Meta models are used
 
