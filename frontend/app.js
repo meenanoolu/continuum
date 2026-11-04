@@ -253,7 +253,7 @@ function renderGate() {
     el.append(h("div", { class: "gate-sheet" },
       h("div", { class: "gate-top" }, svgLock(), h("h3", {}, "Gate locked")),
       h("div", { class: "gate-body" },
-        pol.strictness === "strict" ? h("div", { class: "strict" }, h("b", {}, "This Gate is stricter than usual: "), pol.reasons.join("; ") + ". You get four questions and a higher bar.") : null,
+        pol.strictness === "strict" ? h("div", { class: "strict" }, h("b", {}, "This Gate is a bit stricter: "), pol.reasons.join("; ") + ".") : null,
         area(h("label", { for: "explain-back" }, "Explain it back in your own words. What was built, and why this way?"), "explain-back", 4, "Pasting the explanation above is detected and scores zero."),
         gate.questions.map((q, i) => area(h("label", { for: `ans-${i}` }, h("span", { class: "kind" }, q.type.replace("_", " ")), q.question, q.focus ? h("span", { class: "focus" }, q.focus) : null), `ans-${i}`, 2)),
         err,
