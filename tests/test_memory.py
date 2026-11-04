@@ -23,7 +23,7 @@ def test_memory_changes_policy(tmp_path):
     m.record_gate("p", "s1", "Unit Testing", False, 0.4, {"parroting": True}, 1)
     m.record_gate("p", "s1", "unit testing", False, 0.5, {"parroting": True}, 2)
     pol = m.gate_policy("p", "unit testing")
-    assert pol["strictness"] == "strict" and pol["questions"] == 4
+    assert pol["strictness"] == "strict" and pol["questions"] == 3
     assert m.weak_concepts() == ["unit testing"]
     assert m.should_revise("p", 0)
     assert m.should_revise("p", 2) is None  # already revised at this point

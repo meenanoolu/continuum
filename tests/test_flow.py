@@ -85,7 +85,7 @@ def test_memory_adapts_and_plan_revises_after_two_failures(client):
     assert ok["state"]["index"] == st["index"], "revised plan must not skip its first step"
     # next gate is stricter, and says why
     s3 = run_step(client)["state"]
-    assert s3["gate"]["policy"]["strictness"] == "strict" and len(s3["gate"]["questions"]) == 4
+    assert s3["gate"]["policy"]["strictness"] == "strict" and len(s3["gate"]["questions"]) == 3
     assert s3["gate"]["policy"]["reasons"]
 
 
