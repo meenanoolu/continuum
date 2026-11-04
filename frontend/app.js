@@ -201,7 +201,7 @@ function renderResume(active) {
 function renderPills() {
   const el = clear($("pills")), m = S && S.models;
   const pill = (name, on) => h("span", { class: "pill " + (on ? "on" : "") }, h("i"), name);
-  if (m) el.append(pill("Muse Spark on Meta API", m.meta.available), pill("Muse Spark Open on Baseten", m.open.available));
+  if (m) el.append(pill("Muse Spark on Meta API", m.meta.available), pill("Muse Spark Open on Baseten", m.open.available), pill("Muse Voice Transcribe", m.meta.available));
   if (window.__fake) el.append(h("span", { class: "pill warn" }, "Offline fake model"));
 }
 
@@ -272,9 +272,8 @@ function renderEvidence() {
 // ------------------------------------------------------------------ gate
 function area(label, id, rows, hint) {
   const lab = typeof label === "string" ? h("label", { for: id }, label) : label;
-  return h("div", { class: "q" },
-    h("div", { class: "label-row" }, lab, micBtn(id)),
-    h("textarea", { id, rows, placeholder: hint || "" }));
+  return h("div", { class: "q" }, lab,
+    h("div", { class: "field-mic" }, h("textarea", { id, rows, placeholder: hint || "" }), micBtn(id)));
 }
 function pips(n) { return h("span", { class: "pips", "aria-label": `${n} of 2` }, [0, 1].map((i) => h("i", { class: i < n ? "on" : "" }))); }
 

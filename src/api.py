@@ -244,6 +244,7 @@ async def transcribe(audio: UploadFile = File(...)) -> dict[str, Any]:
     if len(raw) > 8_000_000:
         raise HTTPException(status_code=400, detail="Recording is too long (max ~60s).")
 
+    t_start = time.time()
     suffix = Path(audio.filename or "clip.webm").suffix or ".webm"
     with tempfile.TemporaryDirectory() as td:
         src = Path(td) / f"in{suffix}"
@@ -302,8 +303,11 @@ async def transcribe(audio: UploadFile = File(...)) -> dict[str, Any]:
     if not text_out:
         raise HTTPException(status_code=502, detail="Got an empty transcript. Try speaking a bit longer.")
 
-    trace.record(purpose="voice.transcribe", provider="meta", model="muse-voice-transcribe-1.0",
-                 ms=0, tokens=None, ok=True, note=f"{len(text_out)} chars")
+    try:  # the "Model calls" panel is a nice-to-have; never fail a transcription because of it
+        trace.record(purpose="voice.transcribe", provider="meta", model="muse-voice-transcribe-1.0",
+                     ms=int((time.time() - t_start) * 1000), tokens=None, ok=True, note=f"{len(text_out)} chars")
+    except Exception:
+        pass
     return {"text": text_out}
 
 
