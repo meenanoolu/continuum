@@ -183,7 +183,7 @@ class PersonalMemory:
         strict = bool(reasons)
         return {
             "strictness": "strict" if strict else "standard",
-            "questions": 4 if strict else 3,
+            "questions": 3 if strict else 2,
             "pass_threshold": 1.4 if strict else 1.2,
             "weak_concepts": self.weak_concepts(3),
             "reasons": reasons,
