@@ -43,7 +43,11 @@
         <input id="project-name" type="text" maxlength="80" placeholder="e.g. slothprep" />
         <label for="repo">Existing repo <span class="opt">optional, a folder path or a github.com link</span></label>
         <input id="repo" type="text" maxlength="300" placeholder="C:\code\slothprep  or  https://github.com/you/slothprep" />
-        <label for="plan">What is the next piece of work?</label>
+        <div class="label-row">
+          <label for="plan">What is the next piece of work?</label>
+          <!-- placeholder: app.js swaps this for the real mic button (outline SVG icon) on load -->
+          <button type="button" class="mic-btn" id="plan-mic" title="Speak instead of typing (Muse Voice Transcribe)" aria-label="Record voice"></button>
+        </div>
         <textarea id="plan" rows="5" placeholder="Two to four concrete sentences. For example: add a /health endpoint that reports database status, and write tests for the failure case."></textarea>
         <div class="row">
           <label class="ghost file">

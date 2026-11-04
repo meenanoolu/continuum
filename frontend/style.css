@@ -243,6 +243,44 @@ details.more summary { cursor: pointer; font-weight: 600; font-size: .95rem; }
 .trace .bad { color: var(--red); }
 .trace span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+
+/* ---------- voice mic (outline icon button) ---------- */
+.label-row { display: flex; align-items: center; justify-content: space-between; gap: .6rem; margin-bottom: .35rem; }
+.label-row label { margin: 0; }
+.mic-btn {
+  flex: 0 0 auto;
+  width: 2.3rem; height: 2.3rem;
+  padding: 0;
+  border: 1.5px solid var(--ink);
+  background: var(--ink);
+  color: #b4bec8;                 /* soft grey outline icon, like the reference */
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .15s, color .15s, border-color .15s, transform .1s;
+}
+.mic-btn:hover:not(:disabled) { color: #fff; background: #1c2a3a; }
+.mic-icon {
+  width: 1.2rem; height: 1.2rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  display: block;
+}
+.mic-icon.stop { fill: currentColor; }
+.mic-btn.rec { background: var(--red); border-color: var(--red); color: #fff; animation: mic-pulse 1.1s ease-in-out infinite; }
+.mic-btn.busy { opacity: .7; cursor: wait; }
+.mic-btn.busy .mic-icon { animation: mic-spin .8s linear infinite; }
+@keyframes mic-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(216, 38, 31, .45); }
+  50% { transform: scale(1.06); box-shadow: 0 0 0 7px rgba(216, 38, 31, 0); }
+}
+@keyframes mic-spin { to { transform: rotate(360deg); } }
+.q .label-row { margin-bottom: .35rem; }
+.q .label-row label { margin: 0; flex: 1; }
+
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
   .app { grid-template-columns: minmax(230px, 20rem) minmax(0, 1fr); }
