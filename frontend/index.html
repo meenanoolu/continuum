@@ -42,12 +42,12 @@
 
       <form id="start-form" class="sheet start-form" autocomplete="off">
         <label for="project-name">Project name</label>
-        <input id="project-name" type="text" maxlength="80" placeholder="e.g. slothprep" />
+        <input id="project-name" type="text" maxlength="80" placeholder="Project name" />
         <label for="repo">Existing repo <span class="opt">optional, a folder path or a github.com link</span></label>
-        <input id="repo" type="text" maxlength="300" placeholder="C:\code\slothprep  or  https://github.com/you/slothprep" />
+        <input id="repo" type="text" maxlength="300" placeholder="Folder path or GitHub link (optional)" />
         <label for="plan">What is the next piece of work?</label>
         <div class="field-mic">
-          <textarea id="plan" rows="5" placeholder="Two to four concrete sentences. For example: add a /health endpoint that reports database status, and write tests for the failure case."></textarea>
+          <textarea id="plan" rows="5" placeholder="Describe the next concrete piece of work in a few sentences."></textarea>
           <!-- placeholder: app.js swaps this for the real mic button (outline SVG icon) on load -->
           <button type="button" class="mic-btn" id="plan-mic" title="Speak instead of typing (Muse Voice Transcribe)" aria-label="Record voice"></button>
         </div>
