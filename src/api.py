@@ -232,13 +232,13 @@ def resume_project(project_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/transcribe")
-async def transcribe(audio: UploadFile = File(...)) -> dict[str, Any]:
+def transcribe(audio: UploadFile = File(...)) -> dict[str, Any]:
     """Record from the browser mic → Muse Voice Transcribe → plain text for the user to edit."""
     key = os.getenv("META_API_KEY") or os.getenv("MODEL_API_KEY")
     if not key:
         raise HTTPException(status_code=503, detail="META_API_KEY is not set; voice input is unavailable.")
 
-    raw = await audio.read()
+    raw = audio.file.read()
     if not raw or len(raw) < 200:
         raise HTTPException(status_code=400, detail="Recording was empty or too short.")
     if len(raw) > 8_000_000:
