@@ -32,6 +32,7 @@ AI can generate code faster than you can understand it. Continuum makes understa
 - Project screenshots and diagrams as planning context.
 - Model-call tracing with provider, model, latency and available usage metadata.
 - Local project sessions that can be resumed.
+- Download the current workspace as a zip archive at any time.
 
 ### Voice input and transcription
 
@@ -85,6 +86,7 @@ The frontend uses plain HTML, CSS and JavaScript.
 - Meta Model API key
 - Baseten API key
 - `ffmpeg` on `PATH` (voice transcription only)
+- `git` on `PATH` (cloning GitHub repositories)
 
 ### Install
 
@@ -178,3 +180,6 @@ See `.env.example` for all settings. The main variables are:
 - **Model-dependent evaluation:** Gate quality depends on model output and provider availability.
 - **External services:** Live planning, workers and transcription require their respective providers, credentials and network access.
 
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

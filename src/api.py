@@ -1,24 +1,27 @@
 """FastAPI layer. Thin: all behavior lives in the Orchestrator."""
 from __future__ import annotations
 
-import threading
-import time
-from pathlib import Path
-from typing import Any
-
-import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+import io
 import os
 import subprocess
 import tempfile
+import threading
+import time
+import zipfile
+from pathlib import Path
+from typing import Any
+
 import httpx
+import uvicorn
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from src import trace
 from src.models import get_models
 from src.orchestrator import Orchestrator, OrchestratorError
+from src.sandbox import SKIP_DIRS
 
 app = FastAPI(title="Continuum")
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
@@ -106,14 +109,39 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    import os
-
     return {"ok": True, "models": get_models().status(), "fake_llm": os.getenv("CONTINUUM_FAKE_LLM") == "1"}
 
 
 @app.get("/api/state")
 def state() -> dict[str, Any]:
     return orch().snapshot()
+
+
+@app.get("/api/export")
+def export_workspace() -> StreamingResponse:
+    """Download the current project workspace as a zip archive."""
+    o = orch()
+    if not o.sandbox or not o.state.get("project"):
+        raise HTTPException(status_code=404, detail="No active project workspace to export.")
+    buf = io.BytesIO()
+    root = o.sandbox.root
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+            for filename in filenames:
+                path = Path(dirpath) / filename
+                try:
+                    arcname = path.relative_to(root).as_posix()
+                    zf.write(path, arcname)
+                except (OSError, ValueError):
+                    continue
+    buf.seek(0)
+    slug = o.state["project"].lower().replace(" ", "-")[:40]
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={slug}-workspace.zip"},
+    )
 
 
 @app.post("/api/start")
