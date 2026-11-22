@@ -58,7 +58,6 @@ class PersonalMemory:
                 base[key] = data[key]
         base["concepts"] = data.get("concepts", {})
         base["patterns"].update(data.get("patterns", {}))
-        # older memory files: carry over mastered concepts so nothing the person already learned is lost
         for c in data.get("global_patterns", {}).get("mastered_concepts", []):
             slot = base["concepts"].setdefault(norm_concept(c), self._concept_slot())
             if slot["passes"] == 0:
@@ -100,7 +99,6 @@ class PersonalMemory:
         signals: dict[str, bool],
         attempt: int,
     ) -> None:
-        """One human attempt at a Gate. Updates concept stats, behavior patterns and the project log."""
         proj = self.get_project(project_name)
         key = norm_concept(concept)
         slot = self.data["concepts"].setdefault(key, self._concept_slot())
@@ -167,7 +165,6 @@ class PersonalMemory:
         return self.get_project(project_name)["difficulties"][-limit:]
 
     def gate_policy(self, project_name: str, concept: str | None = None) -> dict[str, Any]:
-        """How hard should the next Gate be, and why? The reason is shown to the person."""
         reasons: list[str] = []
         pats = self.data["patterns"]
         recent = self.recent_outcomes(project_name, 4)
@@ -190,7 +187,6 @@ class PersonalMemory:
         }
 
     def should_revise(self, project_name: str, already_revised_at: int) -> str | None:
-        """Return a human-readable reason if the plan should be revised now, else None."""
         outcomes = self.get_project(project_name)["gate_outcomes"]
         if len(outcomes) <= already_revised_at:
             return None
@@ -204,9 +200,24 @@ class PersonalMemory:
     def profile(self, project_name: str | None = None) -> dict[str, Any]:
         pats = self.data["patterns"]
         policy = self.gate_policy(project_name) if project_name else {"strictness": "standard", "reasons": []}
+        concept_details = []
+        for name, slot in self.data["concepts"].items():
+            passes = slot.get("passes", 0)
+            failures = slot.get("failures", 0)
+            total = passes + failures
+            score = round((passes / total) * 100) if total else 0
+            concept_details.append({
+                "name": name,
+                "passes": passes,
+                "failures": failures,
+                "mastery": score,
+                "last_outcome": slot.get("last_outcome"),
+            })
+        concept_details.sort(key=lambda x: (-x["mastery"], -x["passes"]))
         return {
             "weak_concepts": self.weak_concepts(6),
             "mastered_concepts": self.mastered_concepts(8),
+            "concept_details": concept_details[:12],
             "patterns": [
                 {"key": k, "label": PATTERN_LABELS[k], "count": pats.get(k, 0)} for k in PATTERN_LABELS if pats.get(k, 0)
             ],
